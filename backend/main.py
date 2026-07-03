@@ -21,6 +21,30 @@ logger = logging.getLogger(__name__)
 # Global memory caches for performance tuning
 CLASS_METADATA_CACHE = {}
 inference_engine: YOLOv8Engine = None
+MODEL_PATH = None
+
+PRODUCT_CLASS_NAMES = [
+    "Big Ships", "Biskrem", "California GardenBeans", "Fine", "Freska", "Hohos",
+    "Lifebuoy", "Maxtella", "Milk", "Nescafe Gold", "PLYMS Tuna", "Pantene Oil Replacement",
+    "RedBull", "Rhodes Cheese", "Shampoo Herbal Essences", "Supermi indomie", "Toffifee",
+    "V Cola", "Zabado", "bless conditioner", "cadbury dairy milk chocolate",
+    "herbal essences conditioner", "juhayna mix chocolate", "nivea men deodarant",
+    "oreo original", "pepsi", "pyrosol", "suntop", "tiger chilli and lemon"
+]
+
+def warm_fallback_catalog() -> None:
+    for class_id, class_name in enumerate(PRODUCT_CLASS_NAMES):
+        CLASS_METADATA_CACHE.setdefault(class_id, {
+            "name_en": class_name,
+            "name_ar": class_name,
+            "price": 0.0
+        })
+
+def resolve_model_path() -> str:
+    configured_path = os.getenv("ONNX_MODEL_PATH")
+    if configured_path:
+        return configured_path
+    return os.path.join(os.path.dirname(__file__), "model", "best.onnx")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,7 +53,7 @@ async def lifespan(app: FastAPI):
     Handles DB initialization, memory caching, and ONNX model loading on startup.
     Ensures clean memory teardown on shutdown.
     """
-    global inference_engine
+    global inference_engine, MODEL_PATH
     
     # --- STARTUP LOGIC ---
     try:
@@ -51,12 +75,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Catalog Caching Fault: Slower fallbacks will apply. Error: {str(e)}")
 
-    model_path = os.getenv("ONNX_MODEL_PATH", "./best.onnx")
+    warm_fallback_catalog()
+    logger.info(f"System State: Catalog cache ready with {len(CLASS_METADATA_CACHE)} class mappings.")
+
+    model_path = resolve_model_path()
+    MODEL_PATH = model_path
     if not os.path.exists(model_path):
         logger.warning(f"ONNX Weights Matrix missing at path: '{model_path}'. Running mock fallback modes.")
     else:
         try:
-            inference_engine = YOLOv8Engine(model_path=model_path, conf_threshold=0.45, iou_threshold=0.40)
+            confidence_threshold = float(os.getenv("DETECTION_CONF_THRESHOLD", "0.15"))
+            iou_threshold = float(os.getenv("DETECTION_IOU_THRESHOLD", "0.40"))
+            inference_engine = YOLOv8Engine(
+                model_path=model_path,
+                conf_threshold=confidence_threshold,
+                iou_threshold=iou_threshold
+            )
             logger.info("ONNX Graph successfully mapped into memory space.")
         except Exception as e:
             logger.error(f"Failed to allocate memory array space for ONNX Session execution: {str(e)}")
@@ -126,7 +160,9 @@ async def api_health_pulse():
     return {
         "status": "operational",
         "timestamp": datetime.now(timezone.utc),
-        "onnx_loaded": inference_engine is not None
+        "onnx_loaded": inference_engine is not None,
+        "model_path": MODEL_PATH,
+        "catalog_classes": len(CLASS_METADATA_CACHE)
     }
 
 @app.get("/api/v1/products", response_model=List[CatalogItem])
@@ -188,6 +224,14 @@ async def process_frame_inference(
             "confidence": confidence,
             "box": box
         })
+
+    if raw_detections and not structured_detections:
+        detected_class_ids = sorted({int(cid) for _, _, cid in raw_detections})
+        logger.warning(
+            "Inference produced %s raw detections, but all were filtered before response. Class IDs: %s",
+            len(raw_detections),
+            detected_class_ids
+        )
 
     background_tasks.add_task(
         persist_telemetry_async,

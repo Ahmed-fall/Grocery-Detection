@@ -30,7 +30,7 @@ class DetectionItem(BaseModel):
     """
     Represents a singular, verified object instance localized within a frame.
     """
-    class_id: int = Field(..., description="Pruned class identifier mapped to topology", ge=0, le=16)
+    class_id: int = Field(..., description="Pruned class identifier mapped to topology", ge=0, le=28)
     name_en: str = Field(..., min_length=2, max_length=100)
     name_ar: str = Field(..., min_length=2, max_length=100)
     confidence_score: float = Field(..., description="Model localization certainty", ge=0.0, le=1.0)
@@ -50,11 +50,11 @@ class InferenceRequest(BaseModel):
         Sanitizes data URI schemas and validates string structure prior to decoding.
         """
         if value.startswith("data:"):
-            prefix_match = re.match(r"^data:image\/(png|jpeg|jpg);base64,", value)
+            prefix_match = re.match(r"^data:image\/(png|jpeg|jpg|webp);base64,", value)
             if prefix_match:
                 value = value[len(prefix_match.group(0)):]
             else:
-                raise ValueError("Invalid Data URI header structure. Only JPEG and PNG content formats are supported.")
+                raise ValueError("Invalid Data URI header structure. Only JPEG, PNG, and WEBP content formats are supported.")
         
         cleaned_value = value.strip()
         if not re.match(r'^[A-Za-z0-9+/]+={0,2}$', cleaned_value):
@@ -76,7 +76,7 @@ class CatalogItem(BaseModel):
     """
     Data validation schema for outbound product configurations using strict Pydantic v2 setup.
     """
-    class_id: int = Field(..., ge=0, le=16)
+    class_id: int = Field(..., ge=0, le=28)
     name_en: str
     name_ar: str
     base_price: float

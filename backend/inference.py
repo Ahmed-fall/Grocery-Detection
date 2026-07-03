@@ -5,8 +5,10 @@ import onnxruntime as ort
 import base64
 from typing import List, Tuple
 
+ImageContext = Tuple[int, int, float, float, float]
+
 class YOLOv8Engine:
-    def __init__(self, model_path: str, conf_threshold: float = 0.5, iou_threshold: float = 0.45):
+    def __init__(self, model_path: str, conf_threshold: float = 0.15, iou_threshold: float = 0.45):
         """
         Initializes the ONNX runtime session.
         Defaults to CPU Execution Provider. Add 'CUDAExecutionProvider' to the list 
@@ -28,7 +30,28 @@ class YOLOv8Engine:
         self.input_height = self.input_shape[2]  # Usually 640
         self.input_width = self.input_shape[3]   # Usually 640
 
-    def preprocess_base64(self, base64_str: str) -> np.ndarray:
+    def letterbox(self, img: np.ndarray) -> Tuple[np.ndarray, float, float, float]:
+        """
+        Resizes the image without changing aspect ratio, then pads it to the model input size.
+        Returns the padded image plus scale and padding values for box de-normalization.
+        """
+        original_height, original_width = img.shape[:2]
+        scale = min(self.input_width / original_width, self.input_height / original_height)
+        resized_width = int(round(original_width * scale))
+        resized_height = int(round(original_height * scale))
+
+        resized = cv2.resize(img, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+        pad_x = (self.input_width - resized_width) / 2
+        pad_y = (self.input_height - resized_height) / 2
+
+        padded = np.full((self.input_height, self.input_width, 3), 114, dtype=np.uint8)
+        top = int(round(pad_y - 0.1))
+        left = int(round(pad_x - 0.1))
+        padded[top:top + resized_height, left:left + resized_width] = resized
+
+        return padded, scale, pad_x, pad_y
+
+    def preprocess_base64(self, base64_str: str) -> Tuple[np.ndarray, ImageContext]:
         """
         Decodes a base64 string, converts it to an OpenCV matrix, resizes, 
         and normalizes the tensor to CHW layout [1, 3, 640, 640] format.
@@ -42,10 +65,8 @@ class YOLOv8Engine:
         if img is None:
             raise ValueError("Failed to decode base64 string into an image matrix.")
             
-        # Resize to YOLOv8 expected dimensions (640x640)
-        # Note: In a true production environment with varying aspect ratios, 
-        # letterboxing (padding) should be used instead of direct resizing to preserve aspect ratio.
-        img_resized = cv2.resize(img, (self.input_width, self.input_height))
+        original_height, original_width = img.shape[:2]
+        img_resized, scale, pad_x, pad_y = self.letterbox(img)
         
         # Convert BGR (OpenCV default) to RGB
         img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
@@ -55,9 +76,9 @@ class YOLOv8Engine:
         image_data = np.transpose(image_data, (2, 0, 1))  # (H, W, C) -> (C, H, W)
         image_data = np.expand_dims(image_data, axis=0).astype(np.float32)
         
-        return image_data
+        return image_data, (original_width, original_height, scale, pad_x, pad_y)
 
-    def postprocess(self, output: np.ndarray) -> List[Tuple[List[float], float, int]]:
+    def postprocess(self, output: np.ndarray, image_context: ImageContext) -> List[Tuple[List[float], float, int]]:
         """
         Parses the raw YOLOv8 [1, 21, 8400] output tensor.
         Returns a list of verified detections: ( [x_min, y_min, x_max, y_max], confidence, class_id )
@@ -68,7 +89,7 @@ class YOLOv8Engine:
         # Extract bounding box geometries (x_center, y_center, width, height)
         boxes_xywh = predictions[:, :4]
         
-        # Extract class probabilities (Cols 4 to 20 for 17 classes)
+        # Extract class probabilities (Cols 4 onward)
         scores_matrix = predictions[:, 4:]
         
         # Get maximum confidence score and corresponding class ID for each of the 8400 anchors
@@ -100,16 +121,25 @@ class YOLOv8Engine:
         )
         
         results = []
+        original_width, original_height, scale, pad_x, pad_y = image_context
         if len(indices) > 0:
             for i in indices.flatten():
                 # Get NMS-approved box
                 x_min, y_min, w, h = boxes_xywh_for_nms[i]
                 
+                orig_x_min = (x_min - pad_x) / scale
+                orig_y_min = (y_min - pad_y) / scale
+                orig_x_max = (x_min + w - pad_x) / scale
+                orig_y_max = (y_min + h - pad_y) / scale
+
                 # Convert to Pydantic-compliant normalized coordinates [0.0, 1.0]
-                norm_x_min = max(0.0, x_min / self.input_width)
-                norm_y_min = max(0.0, y_min / self.input_height)
-                norm_x_max = min(1.0, (x_min + w) / self.input_width)
-                norm_y_max = min(1.0, (y_min + h) / self.input_height)
+                norm_x_min = max(0.0, orig_x_min / original_width)
+                norm_y_min = max(0.0, orig_y_min / original_height)
+                norm_x_max = min(1.0, orig_x_max / original_width)
+                norm_y_max = min(1.0, orig_y_max / original_height)
+
+                if norm_x_max <= norm_x_min or norm_y_max <= norm_y_min:
+                    continue
                 
                 results.append((
                     [norm_x_min, norm_y_min, norm_x_max, norm_y_max],
@@ -123,10 +153,10 @@ class YOLOv8Engine:
         """
         Executes the full pipeline: Preprocess -> ONNX Run -> Postprocess NMS
         """
-        input_tensor = self.preprocess_base64(base64_img)
+        input_tensor, image_context = self.preprocess_base64(base64_img)
         
         # Execute ONNX graph
         outputs = self.session.run([self.output_name], {self.input_name: input_tensor})
         
         # Run Custom NMS logic
-        return self.postprocess(outputs)
+        return self.postprocess(outputs, image_context)
