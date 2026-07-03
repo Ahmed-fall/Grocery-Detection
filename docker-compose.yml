@@ -1,0 +1,30 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: market-recognition-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    restart: unless-stopped
+    volumes:
+      # Mount the model folder externally so you can update weights without rebuilding the container
+      - ./backend/model:/app/model  
+
+  frontend:
+    build:
+      context: ./next-frontend
+      dockerfile: Dockerfile
+    container_name: market-recognition-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped

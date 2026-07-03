@@ -1,0 +1,15 @@
+# model weights (too large for GitHub)
+#*.pt
+#*.onnx
+*backend/node_modules
+*next-frontend/node_modules
+__pycache__/
+*.pyc
+.env
+venv/
+.conda/
+
+
+# data 
+data/images/
+*.zip
