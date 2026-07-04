@@ -83,3 +83,4 @@ class CatalogItem(BaseModel):
 
     # Standardized Pydantic v2 configuration layout
     model_config = ConfigDict(from_attributes=True)
+

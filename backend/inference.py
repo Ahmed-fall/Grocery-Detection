@@ -30,6 +30,10 @@ class YOLOv8Engine:
         self.input_height = self.input_shape[2]  # Usually 640
         self.input_width = self.input_shape[3]   # Usually 640
 
+        # --- CRITICAL FIX: Determine the precision expected by the ONNX graph ---
+        input_type = self.session.get_inputs()[0].type
+        self.np_type = np.float16 if 'float16' in input_type.lower() else np.float32
+
     def letterbox(self, img: np.ndarray) -> Tuple[np.ndarray, float, float, float]:
         """
         Resizes the image without changing aspect ratio, then pads it to the model input size.
@@ -37,18 +41,20 @@ class YOLOv8Engine:
         """
         original_height, original_width = img.shape[:2]
         scale = min(self.input_width / original_width, self.input_height / original_height)
+        
         resized_width = int(round(original_width * scale))
         resized_height = int(round(original_height * scale))
-
         resized = cv2.resize(img, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+        
         pad_x = (self.input_width - resized_width) / 2
         pad_y = (self.input_height - resized_height) / 2
-
+        
         padded = np.full((self.input_height, self.input_width, 3), 114, dtype=np.uint8)
+        
         top = int(round(pad_y - 0.1))
         left = int(round(pad_x - 0.1))
         padded[top:top + resized_height, left:left + resized_width] = resized
-
+        
         return padded, scale, pad_x, pad_y
 
     def preprocess_base64(self, base64_str: str) -> Tuple[np.ndarray, ImageContext]:
@@ -74,7 +80,9 @@ class YOLOv8Engine:
         # Normalize pixel values to [0.0, 1.0] and transpose to CHW
         image_data = np.array(img_rgb) / 255.0
         image_data = np.transpose(image_data, (2, 0, 1))  # (H, W, C) -> (C, H, W)
-        image_data = np.expand_dims(image_data, axis=0).astype(np.float32)
+        
+        # --- CRITICAL FIX: Use dynamic precision mapping to avoid FP32 vs FP16 mismatches ---
+        image_data = np.expand_dims(image_data, axis=0).astype(self.np_type)
         
         return image_data, (original_width, original_height, scale, pad_x, pad_y)
 
@@ -122,6 +130,7 @@ class YOLOv8Engine:
         
         results = []
         original_width, original_height, scale, pad_x, pad_y = image_context
+
         if len(indices) > 0:
             for i in indices.flatten():
                 # Get NMS-approved box

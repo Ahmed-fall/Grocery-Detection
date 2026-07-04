@@ -1,4 +1,4 @@
-# database.py
+#database.py
 import os
 import asyncio
 from supabase import AsyncClient, acreate_client
@@ -10,9 +10,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip('"').strip("'")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip('"').strip("'")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     logger.critical("Missing Supabase credentials in environment variables.")
@@ -29,8 +28,7 @@ async def init_db() -> AsyncClient:
     global _async_supabase_client
     if _async_supabase_client is None:
         try:
-            print(f"DEBUG: Raw URL string is -> '{SUPABASE_URL}'")
-            print(f"DEBUG: URL length is -> {len(str(SUPABASE_URL))}")
+            print(f"DEBUG URL: >{SUPABASE_URL}<")
             _async_supabase_client = await acreate_client(SUPABASE_URL, SUPABASE_KEY)
             logger.info("Supabase AsyncClient successfully initialized.")
         except Exception as e:

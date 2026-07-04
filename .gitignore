@@ -1,6 +1,6 @@
 # model weights (too large for GitHub)
-#*.pt
-#*.onnx
+*.pt
+*.onnx
 *backend/node_modules
 *next-frontend/node_modules
 __pycache__/

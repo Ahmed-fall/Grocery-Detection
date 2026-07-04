@@ -1,4 +1,4 @@
-# main.py
+#main.py
 import os
 import time
 from uuid import uuid4
@@ -7,20 +7,13 @@ from typing import List
 from contextlib import asynccontextmanager
 import logging
 
-
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db, get_db, AsyncClient
 from schemas import InferenceRequest, InferenceResponse, DetectionItem, BoundingBox, CatalogItem
 from inference import YOLOv8Engine
-from dotenv import load_dotenv
-import os
 
-load_dotenv() 
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Initialize standardized systems logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -220,27 +213,40 @@ async def process_frame_inference(
     worker_telemetry_payload = []
     
     for box, confidence, cid in raw_detections:
-        if cid not in CLASS_METADATA_CACHE:
-            logger.warning(f"Anomaly Detected: Model localized Class ID [{cid}], which is missing from global configurations.")
-            continue
+            # --- CRITICAL FIX: Explicit Native Python Type Casting ---
+            # Force strict conversion from NumPy C-types to Python native types
+            # to prevent JSON serialization faults in background telemetry tasks
+            native_cid = int(cid.item() if hasattr(cid, 'item') else cid)
+            native_conf = float(confidence.item() if hasattr(confidence, 'item') else confidence)
+            native_box = [float(coord.item() if hasattr(coord, 'item') else coord) for coord in box]
+
+            if native_cid not in CLASS_METADATA_CACHE:
+                logger.warning(f"Anomaly Detected: Model localized Class ID [{native_cid}], which is missing from global configurations.")
+                continue
+                    
+            metadata = CLASS_METADATA_CACHE[native_cid]
             
-        metadata = CLASS_METADATA_CACHE[cid]
-        
-        item_node = DetectionItem(
-            class_id=cid,
-            name_en=metadata['name_en'],
-            name_ar=metadata['name_ar'],
-            confidence_score=confidence,
-            bounding_box=BoundingBox(x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]),
-            price=metadata['price']
-        )
-        structured_detections.append(item_node)
-        
-        worker_telemetry_payload.append({
-            "class_id": cid,
-            "confidence": confidence,
-            "box": box
-        })
+            item_node = DetectionItem(
+                class_id=native_cid,
+                name_en=metadata['name_en'],
+                name_ar=metadata['name_ar'],
+                confidence_score=native_conf,
+                bounding_box=BoundingBox(
+                    x_min=native_box[0], 
+                    y_min=native_box[1], 
+                    x_max=native_box[2], 
+                    y_max=native_box[3]
+                ),
+                price=metadata['price']
+            )
+            structured_detections.append(item_node)
+            
+            # Telemetry payload is now guaranteed to be 100% JSON serializable
+            worker_telemetry_payload.append({
+                "class_id": native_cid,
+                "confidence": native_conf,
+                "box": native_box
+            })
 
     if raw_detections and not structured_detections:
         detected_class_ids = sorted({int(cid) for _, _, cid in raw_detections})
@@ -265,3 +271,4 @@ async def process_frame_inference(
         total_detections=len(structured_detections),
         detections=structured_detections
     )
+
