@@ -98,12 +98,12 @@ export default function StaticUploadPage() {
             {!selectedImageUrl ? (
               <ImageUploader onImageProcessed={processStaticImage} isProcessing={isProcessing} />
             ) : (
-              <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl inline-block max-w-full">
+              <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl inline-block max-w-full md:max-w-md lg:max-w-xl">
                 {/* The static image dictates the container size so percentages match perfectly */}
                 <img 
                   src={selectedImageUrl} 
                   alt="Target for analysis" 
-                  className={`w-full h-auto block transition-opacity duration-300 ${isProcessing ? 'opacity-50' : 'opacity-100'}`}
+                  className={`block w-auto max-w-full max-h-[52vh] object-contain transition-opacity duration-300 ${isProcessing ? 'opacity-50' : 'opacity-100'}`}
                 />
                 
                 {isProcessing && (

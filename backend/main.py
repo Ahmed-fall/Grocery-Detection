@@ -7,13 +7,20 @@ from typing import List
 from contextlib import asynccontextmanager
 import logging
 
+
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db, get_db, AsyncClient
 from schemas import InferenceRequest, InferenceResponse, DetectionItem, BoundingBox, CatalogItem
 from inference import YOLOv8Engine
+from dotenv import load_dotenv
+import os
 
+load_dotenv() 
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Initialize standardized systems logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -45,6 +52,16 @@ def resolve_model_path() -> str:
     if configured_path:
         return configured_path
     return os.path.join(os.path.dirname(__file__), "model", "best.onnx")
+
+def get_allowed_origins() -> List[str]:
+    configured_origins = os.getenv("FRONTEND_ORIGINS", "")
+    origins = [
+        origin.strip().rstrip("/")
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    ]
+    origins.extend(["http://localhost:3000", "http://localhost:3001"])
+    return sorted(set(origins))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -114,7 +131,7 @@ app = FastAPI(
 # Enforce strict CORS parameters for safe front-end application access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"], 
+    allow_origins=get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

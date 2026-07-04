@@ -29,6 +29,8 @@ async def init_db() -> AsyncClient:
     global _async_supabase_client
     if _async_supabase_client is None:
         try:
+            print(f"DEBUG: Raw URL string is -> '{SUPABASE_URL}'")
+            print(f"DEBUG: URL length is -> {len(str(SUPABASE_URL))}")
             _async_supabase_client = await acreate_client(SUPABASE_URL, SUPABASE_KEY)
             logger.info("Supabase AsyncClient successfully initialized.")
         except Exception as e:
